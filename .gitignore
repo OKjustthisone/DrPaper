@@ -1,23 +1,30 @@
 # Dependencies
 frontend/node_modules/
 backend/venv/
+node_modules/
+jspm_packages/
 
 # Build output
 frontend/.next/
+.next/
+out/
+dist/
+.output
+build/Release
 
 # Python
 **/__pycache__/
 *.pyc
 *.pyo
 *.egg-info/
-dist/
-build/
 *.egg
 
 # Environment
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
 
 # Claude
 .claude/
@@ -26,6 +33,7 @@ build/
 # IDE
 .idea/
 .vscode/
+.vscode-test
 *.swp
 *.swo
 *~
@@ -41,4 +49,24 @@ backend/uploads/
 
 # Logs
 *.log
-/tmp/
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional caches
+.npm
+.eslintcache
+.stylelintcache
+
+# Coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Misc
+*.tgz
+.pnpm-store
