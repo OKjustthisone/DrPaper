@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models.database import init_db
-from app.routers import notebooks, sources, chat, artifacts, models
+from app.routers import notebooks, sources, chat, artifacts, models, search
 
 init_db()
 
@@ -21,6 +21,7 @@ app.include_router(sources.router)
 app.include_router(chat.router)
 app.include_router(artifacts.router)
 app.include_router(models.router)
+app.include_router(search.router)
 
 
 @app.get("/api/health")

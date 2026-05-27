@@ -7,9 +7,10 @@ interface Props {
   onToggle: (id: number) => void;
   onUpload: (file: File) => Promise<void>;
   onDelete: (id: number) => void;
+  onSearchOpen?: () => void;
 }
 
-export default function SourcePanel({ sources, selectedSources, onToggle, onUpload, onDelete }: Props) {
+export default function SourcePanel({ sources, selectedSources, onToggle, onUpload, onDelete, onSearchOpen }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -35,12 +36,20 @@ export default function SourcePanel({ sources, selectedSources, onToggle, onUplo
             <button onClick={deselectAll} className="text-xs text-[var(--color-text-muted)] hover:underline">None</button>
           </div>
         </div>
-        <label className={`flex items-center justify-center gap-1 px-3 py-2 border-2 border-dashed rounded-lg text-xs cursor-pointer transition-colors
-          ${uploading ? "border-[var(--color-primary)] bg-blue-50" : "border-[var(--color-border)] hover:border-[var(--color-primary)] hover:bg-gray-50"}`}>
-          <span>{uploading ? "Uploading..." : "+ Upload File"}</span>
-          <input ref={fileRef} type="file" className="hidden" accept=".pdf,.docx,.md,.txt,.csv,.xlsx,.png,.jpg,.jpeg"
-            onChange={handleFile} disabled={uploading} />
-        </label>
+        <div className="flex gap-1">
+          <label className={`flex-1 flex items-center justify-center gap-1 px-3 py-2 border-2 border-dashed rounded-lg text-xs cursor-pointer transition-colors
+            ${uploading ? "border-[var(--color-primary)] bg-blue-50" : "border-[var(--color-border)] hover:border-[var(--color-primary)] hover:bg-gray-50"}`}>
+            <span>{uploading ? "Uploading..." : "+ Upload"}</span>
+            <input ref={fileRef} type="file" className="hidden" accept=".pdf,.docx,.md,.txt,.csv,.xlsx,.png,.jpg,.jpeg"
+              onChange={handleFile} disabled={uploading} />
+          </label>
+          {onSearchOpen && (
+            <button onClick={onSearchOpen}
+              className="flex items-center justify-center gap-1 px-3 py-2 border-2 border-dashed border-[var(--color-border)] rounded-lg text-xs hover:border-[var(--color-accent)] hover:bg-purple-50 transition-colors">
+              🔍 Search
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">
