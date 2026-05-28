@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DrPaper - AI Research Assistant</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.citation-sup { color: #2563eb; cursor: pointer; font-weight: bold; font-size: 10px; vertical-align: super; }
+.citation-sup:hover { text-decoration: underline; }
+.message-content { line-height: 1.6; white-space: pre-wrap; }
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e5e7eb; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const API = "http://localhost:8000";
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ---- API helpers ----
+const api = {
+  get: (url) => fetch(API + url).then(r => r.json()),
+  post: (url, data) => fetch(API + url, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}).then(r => r.json()),
+  put: (url, data) => fetch(API + url, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}).then(r => r.json()),
+  del: (url) => fetch(API + url, {method:"DELETE"}).then(r => r.json()),
+  upload: (notebookId, file) => { const f=new FormData(); f.append("notebook_id",notebookId); f.append("file",file); return fetch(API+"/api/sources/upload",{method:"POST",body:f}).then(r=>r.json()); }
+};
+
+// ---- Main App ----
+function App() {
+  const [page, setPage] = useState("home");
+  const [notebookId, setNotebookId] = useState(null);
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {page === "home" && <HomePage onEnter={(id) => { setNotebookId(id); setPage("notebook"); }} onSettings={() => setPage("settings")} />}
+      {page === "notebook" && <NotebookPage id={notebookId} onBack={() => setPage("home")} />}
+      {page === "settings" && <SettingsPage onBack={() => setPage("home")} />}
+    </div>
+  );
+}
+
+// ---- Home Page ----
+function HomePage({ onEnter, onSettings }) {
+  const [notebooks, setNotebooks] = useState([]);
+  const [showCreate, setShowCreate] = useState(false);
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [sysPrompt, setSysPrompt] = useState("");
+
+  const load = () => api.get("/api/notebooks").then(setNotebooks);
+  useEffect(() => { load(); }, []);
+
+  const create = async () => {
+    if (!name.trim()) return;
+    await api.post("/api/notebooks", { name, description: desc, system_prompt: sysPrompt });
+    setName(""); setDesc(""); setSysPrompt(""); setShowCreate(false);
+    load();
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">📚 DrPaper</h1>
+          <p className="text-sm text-gray-500 mt-1">Personal AI Research Assistant</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={onSettings} className="px-3 py-2 border rounded-lg text-sm hover:bg-gray-100">⚙️ Settings</button>
+          <button onClick={() => setShowCreate(!showCreate)} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">+ New Notebook</button>
+        </div>
+      </div>
+
+      {showCreate && (
+        <div className="bg-white border rounded-xl p-4 mb-4 shadow-sm">
+          <input className="w-full border rounded-lg px-3 py-2 text-sm mb-2" placeholder="Notebook name" value={name} onChange={e => setName(e.target.value)} />
+          <input className="w-full border rounded-lg px-3 py-2 text-sm mb-2" placeholder="Description (optional)" value={desc} onChange={e => setDesc(e.target.value)} />
+          <textarea className="w-full border rounded-lg px-3 py-2 text-sm mb-3" rows="2" placeholder="System prompt (optional)" value={sysPrompt} onChange={e => setSysPrompt(e.target.value)} />
+          <div className="flex gap-2">
+            <button onClick={create} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm">Create</button>
+            <button onClick={() => setShowCreate(false)} className="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {notebooks.length === 0 && <p className="text-center text-gray-400 py-16">No notebooks yet. Create one to start.</p>}
+        {notebooks.map(nb => (
+          <div key={nb.id} onClick={() => onEnter(nb.id)} className="bg-white border rounded-xl p-4 cursor-pointer hover:shadow-md transition-shadow">
+            <h3 className="font-semibold">{nb.name}</h3>
+            {nb.description && <p className="text-sm text-gray-500 mt-1">{nb.description}</p>}
+            <p className="text-xs text-gray-400 mt-2">Updated: {nb.updated_at}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---- Notebook Page ----
+function NotebookPage({ id, onBack }) {
+  const [notebook, setNotebook] = useState(null);
+  const [sources, setSources] = useState([]);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [tab, setTab] = useState("chat");
+  const [showSearch, setShowSearch] = useState(false);
+
+  const loadSources = () => api.get(`/api/sources?notebook_id=${id}`).then(setSources);
+  useEffect(() => { api.get(`/api/notebooks/${id}`).then(setNotebook); loadSources(); }, [id]);
+
+  const toggleSource = (sid) => {
+    setSelectedIds(prev => { const n = new Set(prev); n.has(sid) ? n.delete(sid) : n.add(sid); return n; });
+  };
+
+  const handleUpload = async (file) => { await api.upload(id, file); loadSources(); };
+  const handleDeleteSource = async (sid) => { await api.del(`/api/sources/${sid}`); setSelectedIds(prev => { const n=new Set(prev); n.delete(sid); return n; }); loadSources(); };
+
+  if (!notebook) return <div className="p-6 text-gray-400">Loading...</div>;
+
+  return (
+    <div className="h-screen flex flex-col">
+      <header className="h-12 bg-white border-b flex items-center px-4 shrink-0">
+        <button onClick={onBack} className="text-gray-500 hover:text-gray-700 mr-3 text-sm">←</button>
+        <h1 className="font-semibold text-sm truncate">{notebook.name}</h1>
+        <span className="text-xs text-gray-400 ml-2">{sources.length} sources</span>
+        <div className="ml-auto flex gap-1">
+          <button onClick={() => setTab("chat")} className={`px-3 py-1 text-xs rounded ${tab==="chat"?"bg-blue-600 text-white":"hover:bg-gray-100"}`}>Chat</button>
+          <button onClick={() => setTab("artifacts")} className={`px-3 py-1 text-xs rounded ${tab==="artifacts"?"bg-blue-600 text-white":"hover:bg-gray-100"}`}>Artifacts</button>
+        </div>
+      </header>
+
+      <div className="flex-1 flex overflow-hidden">
+        {/* Source Panel */}
+        <aside className="w-64 bg-white border-r flex flex-col shrink-0">
+          <div className="p-3 border-b">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-gray-500 uppercase">Sources</span>
+              <div className="flex gap-1">
+                <button onClick={() => sources.forEach(s => toggleSource(s.id))} className="text-xs text-blue-600 hover:underline">All</button>
+                <button onClick={() => selectedIds.forEach(sid => toggleSource(sid))} className="text-xs text-gray-400 hover:underline">None</button>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <FileUpload onUpload={handleUpload} />
+              <button onClick={() => setShowSearch(!showSearch)} className="flex-1 px-2 py-2 border-2 border-dashed rounded-lg text-xs hover:border-purple-500 hover:bg-purple-50">🔍 Search</button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2">
+            {sources.map(s => (
+              <div key={s.id} className={`flex items-center gap-2 p-2 rounded-lg mb-1 cursor-pointer group ${selectedIds.has(s.id)?"bg-blue-50":"hover:bg-gray-50"}`}>
+                <input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSource(s.id)} />
+                <div className="flex-1 min-w-0" onClick={() => toggleSource(s.id)}>
+                  <p className="text-xs truncate font-medium">{s.filename}</p>
+                  <p className="text-xs text-gray-400">{s.file_type} · {s.chunk_count}c · {s.status}</p>
+                </div>
+                <button onClick={() => handleDeleteSource(s.id)} className="opacity-0 group-hover:opacity-100 text-xs text-red-400">×</button>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        {/* Main area */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {showSearch && <SearchPanel notebookId={id} onImport={loadSources} onClose={() => setShowSearch(false)} />}
+          {!showSearch && tab === "chat" && <ChatPanel notebookId={id} selectedIds={selectedIds} sysPrompt={notebook.system_prompt} />}
+          {!showSearch && tab === "artifacts" && <ArtifactPanel notebookId={id} selectedIds={selectedIds} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- File Upload ----
+function FileUpload({ onUpload }) {
+  const [up, setUp] = useState(false);
+  const ref = useRef(null);
+  const handle = async (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    setUp(true); try { await onUpload(f); } catch(e) { alert("Upload failed"); }
+    setUp(false); ref.current.value = "";
+  };
+  return (
+    <label className={`flex-1 flex items-center justify-center px-2 py-2 border-2 border-dashed rounded-lg text-xs cursor-pointer ${up?"border-blue-400 bg-blue-50":"border-gray-200 hover:border-blue-400"}`}>
+      <span>{up ? "..." : "+ Upload"}</span>
+      <input ref={ref} type="file" className="hidden" accept=".pdf,.docx,.md,.txt,.csv,.xlsx,.png,.jpg,.jpeg" onChange={handle} disabled={up} />
+    </label>
+  );
+}
+
+// ---- Chat Panel ----
+function ChatPanel({ notebookId, selectedIds, sysPrompt }) {
+  const [msgs, setMsgs] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [activeCit, setActiveCit] = useState(null);
+  const bottomRef = useRef(null);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [msgs]);
+
+  const send = async () => {
+    if (!input.trim() || loading) return;
+    const m = input;
+    setMsgs(prev => [...prev, {role:"user",content:m}]);
+    setInput(""); setLoading(true);
+    try {
+      const r = await api.post("/api/chat", { notebook_id: notebookId, message: m, source_ids: [...selectedIds] });
+      setMsgs(prev => [...prev, {role:"assistant",content:r.answer,citations:r.citations}]);
+    } catch(e) {
+      setMsgs(prev => [...prev, {role:"assistant",content:"Error: "+e.message}]);
+    }
+    setLoading(false);
+  };
+
+  const renderContent = (text, citations) => {
+    if (!citations?.length) return text;
+    const parts = text.split(/(\[\d+\])/g);
+    return parts.map((p,i) => {
+      const m = p.match(/\[(\d+)\]/);
+      if (m) {
+        const cit = citations.find(c => c.index === parseInt(m[1]));
+        if (cit) return <span key={i} className="citation-sup" onClick={() => setActiveCit(cit)} title={cit.filename}>[{m[1]}]</span>;
+      }
+      return <span key={i}>{p}</span>;
+    });
+  };
+
+  return (
+    <>
+      <div className="flex-1 flex flex-col min-h-0">
+        {sysPrompt && <div className="px-4 py-1.5 bg-yellow-50 border-b border-yellow-200 text-xs text-yellow-800">System: {sysPrompt}</div>}
+        <div className="flex-1 overflow-y-auto p-4">
+          {msgs.length === 0 && <p className="text-center text-gray-400 py-16">Ask a question about your selected sources.</p>}
+          {msgs.map((msg,i) => (
+            <div key={i} className={`flex mb-4 ${msg.role==="user"?"justify-end":"justify-start"}`}>
+              <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border shadow-sm"}`}>
+                <div className="text-sm message-content">{msg.role==="user" ? msg.content : renderContent(msg.content, msg.citations)}</div>
+                {msg.citations?.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-gray-100">
+                    <p className="text-xs text-gray-400 mb-1">Refs:</p>
+                    <div className="flex flex-wrap gap-1">
+                      {msg.citations.map(c => (
+                        <button key={c.index} onClick={() => setActiveCit(c)} className="text-xs px-2 py-0.5 bg-gray-100 hover:bg-blue-100 rounded-full">{c.filename} p.{c.page||"?"}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          {loading && <div className="flex justify-start mb-4"><div className="bg-white border rounded-2xl px-4 py-3 shadow-sm"><div className="spinner" /></div></div>}
+          <div ref={bottomRef} />
+        </div>
+        <div className="p-4 border-t bg-white">
+          <div className="flex gap-2">
+            <input className="flex-1 border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder={selectedIds.size > 0 ? "Ask about selected sources..." : "Type a message..."}
+              value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key==="Enter" && send()} />
+            <button onClick={send} disabled={loading} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 disabled:opacity-50">Send</button>
+          </div>
+        </div>
+      </div>
+      {activeCit && <CitationSidebar citation={activeCit} onClose={() => setActiveCit(null)} />}
+    </>
+  );
+}
+
+// ---- Citation Sidebar ----
+function CitationSidebar({ citation, onClose }) {
+  return (
+    <aside className="w-80 bg-white border-l flex flex-col shrink-0 overflow-hidden">
+      <div className="p-3 border-b flex items-center justify-between">
+        <span className="text-xs font-semibold text-gray-500">Ref [{citation.index}]</span>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700">×</button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="mb-3">
+          <p className="text-xs text-gray-400">Source</p>
+          <p className="text-sm font-medium">{citation.filename}</p>
+        </div>
+        {citation.page && <div className="mb-3"><p className="text-xs text-gray-400">Page</p><p className="text-sm">{citation.page}</p></div>}
+        <div>
+          <p className="text-xs text-gray-400 mb-1">Content</p>
+          <div className="bg-gray-50 rounded-lg p-3 text-sm whitespace-pre-wrap">{citation.text}</div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+// ---- Search Panel ----
+function SearchPanel({ notebookId, onImport, onClose }) {
+  const [query, setQuery] = useState("");
+  const [selSrcs, setSelSrcs] = useState(new Set(["pmc","openalex","arxiv"]));
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(new Set());
+
+  const sources = [{k:"pmc",n:"PubMed",e:"🏥"},{k:"openalex",n:"OpenAlex",e:"📖"},{k:"arxiv",n:"arXiv",e:"📐"}];
+
+  const toggleSource = (k) => { setSelSrcs(prev => { const n=new Set(prev); n.has(k)?n.delete(k):n.add(k); return n; }); };
+
+  const search = async () => {
+    if (!query.trim() || selSrcs.size === 0) return;
+    setLoading(true);
+    try {
+      const srcs = [...selSrcs].join(",");
+      const r = await api.get(`/api/search?q=${encodeURIComponent(query)}&sources=${srcs}&limit=10`);
+      setResults(r.results || []);
+    } catch(e) { alert("Search error: "+e.message); }
+    setLoading(false);
+  };
+
+  const importPaper = async (paper) => {
+    setImporting(prev => new Set(prev).add(paper.id));
+    try {
+      await api.post("/api/search/import", { notebook_id: notebookId, paper_id: paper.id, title: paper.title });
+      onImport();
+    } catch(e) { alert("Import error: "+e.message); }
+    setImporting(prev => { const n=new Set(prev); n.delete(paper.id); return n; });
+  };
+
+  return (
+    <div className="flex-1 flex flex-col bg-white overflow-hidden">
+      <div className="p-3 border-b flex items-center justify-between">
+        <span className="text-xs font-semibold text-gray-500">Search Literature</span>
+        <button onClick={onClose} className="text-xs text-gray-400 hover:text-gray-700">× Close</button>
+      </div>
+      <div className="p-3 border-b">
+        <div className="flex gap-1 mb-2">
+          {sources.map(s => (
+            <button key={s.k} onClick={() => toggleSource(s.k)} className={`text-xs px-2 py-1 rounded-full ${selSrcs.has(s.k)?"bg-blue-600 text-white":"bg-gray-100 text-gray-500"}`}>{s.e} {s.n}</button>
+          ))}
+        </div>
+        <div className="flex gap-1">
+          <input className="flex-1 border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Search papers..." value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key==="Enter" && search()} />
+          <button onClick={search} disabled={loading} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 disabled:opacity-50">{loading?"...":"Search"}</button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {results.map(p => (
+          <div key={p.id} className="p-3 border-b border-gray-100 hover:bg-gray-50">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <a href={p.url} target="_blank" className="text-xs font-medium hover:text-blue-600 line-clamp-2">{p.title}</a>
+                <p className="text-xs text-gray-400 mt-1">
+                  {p.authors?.slice(0,60)} · {p.journal} · {p.year}
+                  <span className="ml-1 px-1 py-0.5 rounded bg-gray-100 text-xs uppercase">{p.source}</span>
+                </p>
+                <p className="text-xs text-gray-400 mt-1 line-clamp-2">{p.abstract?.slice(0,300)}</p>
+              </div>
+              <button onClick={() => importPaper(p)} disabled={importing.has(p.id)}
+                className="shrink-0 px-2 py-1 bg-green-50 text-green-700 rounded text-xs hover:bg-green-100 disabled:opacity-50">
+                {importing.has(p.id)?"...":"Import"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---- Artifact Panel ----
+function ArtifactPanel({ notebookId, selectedIds }) {
+  const [mode, setMode] = useState(null);
+  const [inst, setInst] = useState("");
+  const [chartType, setChartType] = useState("bento_grid");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const sourceIds = [...selectedIds];
+
+  const generate = async () => {
+    setLoading(true); setResult(null);
+    try {
+      let r;
+      if (mode === "slide") r = await api.post("/api/artifacts/slide-deck", { notebook_id: notebookId, source_ids: sourceIds, instruction: inst });
+      else if (mode === "infographic") r = await api.post("/api/artifacts/infographic", { notebook_id: notebookId, source_ids: sourceIds, chart_type: chartType, instruction: inst });
+      else if (mode === "table") r = await api.post("/api/artifacts/data-table", { notebook_id: notebookId, source_ids: sourceIds, instruction: inst });
+      setResult({ type: mode, data: r });
+    } catch(e) { alert("Error: "+e.message); }
+    setLoading(false);
+  };
+
+  if (!mode) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-lg font-semibold mb-2">Visual Artifacts Studio</h2>
+          <p className="text-sm text-gray-500 mb-6">Turn your sources into visual artifacts</p>
+          <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto">
+            {[{id:"slide",icon:"📽️",title:"Slide Deck"},{id:"infographic",icon:"🎨",title:"Infographic"},{id:"table",icon:"📋",title:"Data Table"}].map(item => (
+              <button key={item.id} onClick={() => setMode(item.id)} className="bg-white border rounded-xl p-4 hover:border-blue-500 hover:shadow-md text-center">
+                <div className="text-2xl mb-2">{item.icon}</div>
+                <p className="text-sm font-medium">{item.title}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6">
+      <button onClick={() => { setMode(null); setResult(null); }} className="text-sm text-gray-500 hover:text-gray-700 mb-4">← Back</button>
+      <div className="max-w-3xl mx-auto">
+        {mode === "infographic" && (
+          <select className="w-full border rounded-lg px-3 py-2 text-sm mb-3" value={chartType} onChange={e => setChartType(e.target.value)}>
+            <option value="bento_grid">Bento Grid</option>
+            <option value="timeline">Timeline</option>
+            <option value="comparison">Comparison</option>
+          </select>
+        )}
+        <textarea className="w-full border rounded-lg px-3 py-2 text-sm mb-3" rows="2" placeholder="Instructions (optional)" value={inst} onChange={e => setInst(e.target.value)} />
+        <button onClick={generate} disabled={loading} className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50">{loading ? "Generating..." : "Generate"}</button>
+
+        {result && result.type === "slide" && (
+          <div className="mt-6 space-y-3">
+            <h3 className="font-semibold">{result.data.title}</h3>
+            {result.data.slides?.map((s,i) => (
+              <div key={i} className="bg-white border rounded-xl p-4 shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center">{i+1}</span>
+                  <h4 className="font-semibold text-sm">{s.title}</h4>
+                </div>
+                <ul className="space-y-1 ml-8">{s.bullet_points?.map((bp,j) => <li key={j} className="text-sm text-gray-500 list-disc">{bp}</li>)}</ul>
+              </div>
+            ))}
+          </div>
+        )}
+        {result && result.type === "infographic" && (
+          <div className="mt-6">
+            <h3 className="font-semibold mb-3">{result.data.title}</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {result.data.nodes?.map(n => (
+                <div key={n.id} className="bg-white border rounded-xl p-4 shadow-sm" style={n.color?{borderLeft:"3px solid "+n.color}:{}}>
+                  <h4 className="font-semibold text-sm">{n.title}</h4>
+                  <p className="text-sm text-gray-500">{n.content}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {result && result.type === "table" && (
+          <div className="mt-6 bg-white border rounded-xl overflow-hidden shadow-sm">
+            <h3 className="font-semibold p-4 border-b">{result.data.title}</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-gray-50">{result.data.columns?.map((c,i) => <th key={i} className="text-left px-4 py-2 text-xs text-gray-500">{c}</th>)}</tr></thead>
+                <tbody>{result.data.rows?.map((r,i) => <tr key={i} className="hover:bg-gray-50">{r.map((c,j) => <td key={j} className="px-4 py-2 border-b border-gray-100">{c}</td>)}</tr>)}</tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Settings Page ----
+function SettingsPage({ onBack }) {
+  const [models, setModels] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ provider: "google", model_name: "", display_name: "", api_key: "", base_url: "" });
+
+  const load = () => api.get("/api/models").then(setModels);
+  useEffect(() => { load(); }, []);
+
+  const addModel = async () => {
+    if (!form.model_name) return;
+    await api.post("/api/models", form);
+    setForm({ provider: "google", model_name: "", display_name: "", api_key: "", base_url: "" });
+    setShowForm(false); load();
+  };
+
+  const toggleActive = async (m) => { await api.put(`/api/models/${m.id}`, { is_active: !m.is_active }); load(); };
+
+  return (
+    <div className="max-w-3xl mx-auto p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div><h1 className="text-2xl font-bold">Model Hub</h1><p className="text-sm text-gray-500 mt-1">Configure AI models</p></div>
+        <div className="flex gap-2">
+          <button onClick={onBack} className="px-3 py-2 border rounded-lg text-sm hover:bg-gray-100">← Back</button>
+          <button onClick={() => setShowForm(!showForm)} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">+ Add Model</button>
+        </div>
+      </div>
+
+      {showForm && (
+        <div className="bg-white border rounded-xl p-4 mb-4 shadow-sm">
+          <div className="grid gap-3">
+            <select className="border rounded-lg px-3 py-2 text-sm" value={form.provider} onChange={e => setForm({...form,provider:e.target.value})}>
+              {["google","openai","anthropic","deepseek","ollama"].map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <input className="border rounded-lg px-3 py-2 text-sm" placeholder="Model name" value={form.model_name} onChange={e => setForm({...form,model_name:e.target.value})} />
+            <input className="border rounded-lg px-3 py-2 text-sm" placeholder="Display name" value={form.display_name} onChange={e => setForm({...form,display_name:e.target.value})} />
+            <input className="border rounded-lg px-3 py-2 text-sm" type="password" placeholder="API Key" value={form.api_key} onChange={e => setForm({...form,api_key:e.target.value})} />
+            <input className="border rounded-lg px-3 py-2 text-sm" placeholder="Base URL (optional)" value={form.base_url} onChange={e => setForm({...form,base_url:e.target.value})} />
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button onClick={addModel} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm">Add</button>
+            <button onClick={() => setShowForm(false)} className="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {models.map(m => (
+          <div key={m.id} className="bg-white border rounded-xl p-3 flex items-center justify-between">
+            <div>
+              <span className="font-medium text-sm">{m.display_name || m.model_name}</span>
+              <span className="text-xs ml-2 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{m.provider}</span>
+            </div>
+            <button onClick={() => toggleActive(m)} className={`px-3 py-1 text-xs rounded-full ${m.is_active?"bg-green-100 text-green-700":"bg-gray-100 text-gray-400"}`}>{m.is_active?"Active":"Inactive"}</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App />, document.getElementById("root"));
+</script>
+</body>
+</html>
